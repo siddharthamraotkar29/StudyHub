@@ -1,10 +1,23 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const DISABLE_AUTH = (process.env.DISABLE_AUTH === 'true');
+
 const auth = async (req, res, next) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (DISABLE_AUTH) {
+      // Bypass authentication entirely and inject a dummy user for dev/testing.
+      // NOTE: This is insecure and should NOT be used in production.
+      req.user = {
+        id: 'dev-user',
+        name: 'Dev User',
+        email: 'dev@example.com',
+        role: 'dev'
+      };
+      return next();
+    }
 
+    const token = req.header('Authorization')?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -12,43 +25,42 @@ const auth = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
-
-    if (!user) {
-      return res.status(401).json({
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({
         success: false,
-        message: 'Token is invalid, user not found'
+        message: 'JWT_SECRET not configured on server'
       });
     }
 
-    req.user = user;
+    const decoded = jwt.verify(token, secret);
+    // If you store user id in token payload as `id`
+    if (!decoded || !decoded.id) {
+      return res.status(401).json({ success: false, message: 'Invalid token payload' });
+    }
+
+    // Try to fetch user from DB if available (best-effort)
+    try {
+      const user = await User.findById(decoded.id);
+      if (user) {
+        req.user = user;
+      } else {
+        // token valid but user not found — set minimal info
+        req.user = { id: decoded.id };
+      }
+    } catch (err) {
+      // If DB lookup fails, still proceed with decoded id to allow token-based flow
+      req.user = { id: decoded.id };
+    }
+
     next();
-  } catch (error) {
-    console.error('Auth middleware error:', error);
-    res.status(401).json({
+  } catch (err) {
+    console.error('Auth error:', err.message || err);
+    return res.status(401).json({
       success: false,
-      message: 'Token is not valid'
+      message: 'Authentication failed'
     });
   }
 };
 
-// Middleware to restrict access to admin users only (requires auth to run first)
-const adminOnly = (req, res, next) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Access denied. Admin role required.' });
-    }
-
-    next();
-  } catch (error) {
-    console.error('adminOnly middleware error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
-module.exports = { auth, adminOnly };
+module.exports = auth;
