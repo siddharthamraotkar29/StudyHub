@@ -1,66 +1,25 @@
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+// ===============================
+// StudyHub Backend - middleware/auth.js
+// ===============================
 
-const DISABLE_AUTH = (process.env.DISABLE_AUTH === 'true');
+// This version disables all authentication checks.
+// It allows every request to proceed as if the user is authenticated.
+// Safe for quick testing and Render deployments — NOT for production.
 
-const auth = async (req, res, next) => {
+module.exports = async (req, res, next) => {
   try {
-    if (DISABLE_AUTH) {
-      // Bypass authentication entirely and inject a dummy user for dev/testing.
-      // NOTE: This is insecure and should NOT be used in production.
-      req.user = {
-        id: 'dev-user',
-        name: 'Dev User',
-        email: 'dev@example.com',
-        role: 'dev'
-      };
-      return next();
-    }
+    // Dummy user object (so routes expecting req.user don’t break)
+    req.user = {
+      id: 'open-access-user',
+      name: 'Open User',
+      email: 'open@studyhub.dev',
+      role: 'developer'
+    };
 
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided, access denied'
-      });
-    }
-
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      return res.status(500).json({
-        success: false,
-        message: 'JWT_SECRET not configured on server'
-      });
-    }
-
-    const decoded = jwt.verify(token, secret);
-    // If you store user id in token payload as `id`
-    if (!decoded || !decoded.id) {
-      return res.status(401).json({ success: false, message: 'Invalid token payload' });
-    }
-
-    // Try to fetch user from DB if available (best-effort)
-    try {
-      const user = await User.findById(decoded.id);
-      if (user) {
-        req.user = user;
-      } else {
-        // token valid but user not found — set minimal info
-        req.user = { id: decoded.id };
-      }
-    } catch (err) {
-      // If DB lookup fails, still proceed with decoded id to allow token-based flow
-      req.user = { id: decoded.id };
-    }
-
+    // Skip all checks, just continue
     next();
-  } catch (err) {
-    console.error('Auth error:', err.message || err);
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication failed'
-    });
+  } catch (error) {
+    console.error('Auth middleware error:', error.message || error);
+    next();
   }
 };
-
-module.exports = auth;
